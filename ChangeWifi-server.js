@@ -167,9 +167,12 @@ function checkAndInitializeSerialPort() {
     console.error('Error listing serial ports:', err.message);
     if (err.message.includes('spawn udevadm ENOENT')) {
       console.error('udevadm not available. Ensure your environment supports serial port operations.');
+    } else {
+      console.error('An unexpected error occurred:', err.message);
     }
   });
 }
+
 
 checkAndInitializeSerialPort();
 setInterval(checkAndInitializeSerialPort, 10000);
