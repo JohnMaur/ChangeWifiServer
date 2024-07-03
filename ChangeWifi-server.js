@@ -240,13 +240,137 @@
 //   origin: "*",
 // }));
 
+// const express = require('express');
+// const bodyParser = require('body-parser');
+// const { Client } = require('@stomp/stompjs');
+// const SockJS = require('sockjs-client');
+// const os = require('os');
+// const { Server: WebSocketServer } = require('ws'); 
+// const cors = require('cors');
+
+// const app = express();
+// const port = process.env.PORT || 3535;
+// const isLocal = os.hostname() === 'DESKTOP-RQG2KUH'; // Adjust this to your local environment's hostname
+
+// app.use(cors({
+//   origin: "*",
+// }));
+
+// let serialPort;
+// let arduinoMessages = [];
+
+// // Initialize serial port if running in a local environment
+// if (isLocal) {
+//   const { SerialPort } = require('serialport');
+//   const { ReadlineParser } = require('@serialport/parser-readline');
+
+//   serialPort = new SerialPort({
+//     path: 'COM5', // Replace with the appropriate COM port
+//     baudRate: 9600
+//   });
+//   const parser = serialPort.pipe(new ReadlineParser({ delimiter: '\n' }));
+
+//   parser.on('data', (line) => {
+//     console.log(`Received from Arduino: ${line}`);
+//     arduinoMessages.push(line);
+//   });
+
+//   serialPort.on('open', () => {
+//     console.log('Serial port opened');
+//   });
+
+//   serialPort.on('close', () => {
+//     console.log('Serial port closed');
+//   });
+
+//   serialPort.on('error', (err) => {
+//     console.error('Serial port error:', err.message);
+//   });
+// } else {
+//   console.log('Serial port operations are not supported in this environment');
+//   // Implement mock functions or handle accordingly if not local
+// }
+
+// // Middleware
+// app.use(bodyParser.json());
+
+// // Routes
+
+// // Check serial port availability
+// app.get('/check-serial-port', (req, res) => {
+//   res.json({ available: !!serialPort });
+// });
+
+// // Update WiFi settings
+// app.post('/update-wifi', (req, res) => {
+//   if (!serialPort) {
+//     return res.status(500).send('Serial port not available');
+//   }
+
+//   const { ssid, password } = req.body;
+//   const wifiConfig = JSON.stringify({ ssid, password });
+
+//   serialPort.write(`${wifiConfig}\n`, (err) => {
+//     if (err) {
+//       console.error('Error writing to serial port:', err.message);
+//       return res.status(500).send('Error updating WiFi');
+//     }
+//     console.log('Message sent to Arduino:', wifiConfig);
+//     res.send('WiFi settings updated successfully');
+//   });
+// });
+
+// // Get Arduino messages
+// app.get('/arduino-messages', (req, res) => {
+//   res.json({ messages: arduinoMessages });
+// });
+
+// // Start server
+// const server = app.listen(port, () => {
+//   console.log(`Server running on http://localhost:${port}`);
+// });
+
+// // WebSocket server
+// const wss = new WebSocketServer({ server });
+
+// // WebSocket server connection handling
+// wss.on('connection', (ws) => {
+//   console.log('WebSocket client connected');
+
+//   ws.on('message', (message) => {
+//     console.log(`Received message: ${message}`);
+//     // Handle WebSocket messages
+//   });
+
+//   // Example of sending a message back to the WebSocket client
+//   ws.send('Hello, WebSocket client!');
+// });
+
+// // STOMP over WebSocket
+// const socket = new SockJS(`http://localhost:${port}/ws`);
+// const client = new Client({
+//   webSocketFactory: () => socket,
+//   onConnect: () => {
+//     client.subscribe('/topic/messages', (message) => {
+//       console.log(`Received STOMP message: ${message.body}`);
+//       // Handle STOMP messages
+//     });
+//   },
+//   onStompError: (frame) => {
+//     console.error('Broker reported error:', frame.headers['message']);
+//     console.error('Additional details:', frame.body);
+//   },
+// });
+// client.activate();
 const express = require('express');
 const bodyParser = require('body-parser');
 const { Client } = require('@stomp/stompjs');
 const SockJS = require('sockjs-client');
 const os = require('os');
-const { Server: WebSocketServer } = require('ws'); 
+const { Server: WebSocketServer } = require('ws');
 const cors = require('cors');
+const { SerialPort } = require('serialport');
+const { ReadlineParser } = require('@serialport/parser-readline');
 
 const app = express();
 const port = process.env.PORT || 3535;
@@ -259,33 +383,42 @@ app.use(cors({
 let serialPort;
 let arduinoMessages = [];
 
+// Function to initialize the serial port with retry
+const initSerialPort = () => {
+
+  const tryOpenSerialPort = () => {
+    serialPort = new SerialPort({
+      path: 'COM5', // Replace with the appropriate COM port
+      baudRate: 9600
+    });
+    const parser = serialPort.pipe(new ReadlineParser({ delimiter: '\n' }));
+
+    parser.on('data', (line) => {
+      console.log(`Received from Arduino: ${line}`);
+      arduinoMessages.push(line);
+    });
+
+    serialPort.on('open', () => {
+      console.log('Serial port opened');
+    });
+
+    serialPort.on('close', () => {
+      console.log('Serial port closed');
+    });
+
+    serialPort.on('error', (err) => {
+      console.error('Serial port error:', err.message);
+      console.log(`Retrying to open the serial port in 2 seconds...`);
+      setTimeout(tryOpenSerialPort, 2000); // Retry after 2 seconds
+    });
+  };
+
+  tryOpenSerialPort();
+};
+
 // Initialize serial port if running in a local environment
 if (isLocal) {
-  const { SerialPort } = require('serialport');
-  const { ReadlineParser } = require('@serialport/parser-readline');
-
-  serialPort = new SerialPort({
-    path: 'COM5', // Replace with the appropriate COM port
-    baudRate: 9600
-  });
-  const parser = serialPort.pipe(new ReadlineParser({ delimiter: '\n' }));
-
-  parser.on('data', (line) => {
-    console.log(`Received from Arduino: ${line}`);
-    arduinoMessages.push(line);
-  });
-
-  serialPort.on('open', () => {
-    console.log('Serial port opened');
-  });
-
-  serialPort.on('close', () => {
-    console.log('Serial port closed');
-  });
-
-  serialPort.on('error', (err) => {
-    console.error('Serial port error:', err.message);
-  });
+  initSerialPort();
 } else {
   console.log('Serial port operations are not supported in this environment');
   // Implement mock functions or handle accordingly if not local
@@ -336,7 +469,7 @@ const wss = new WebSocketServer({ server });
 // WebSocket server connection handling
 wss.on('connection', (ws) => {
   console.log('WebSocket client connected');
-  
+
   ws.on('message', (message) => {
     console.log(`Received message: ${message}`);
     // Handle WebSocket messages
@@ -362,3 +495,4 @@ const client = new Client({
   },
 });
 client.activate();
+
