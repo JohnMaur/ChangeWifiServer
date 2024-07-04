@@ -557,10 +557,12 @@ wss.on('connection', (ws) => {
 });
 
 function openSerialPort() {
+  const serialPortPath = process.env.SERIAL_PORT_PATH || '/dev/ttyUSB0'; // Adjust for Windows paths
+
   serialPort = new SerialPort({
-    path: 'COM5', // Replace with the appropriate COM port
-    baudRate: 9600
-  });
+          path: serialPortPath, // Replace with the appropriate COM port
+          baudRate: 9600
+        });
   const parser = serialPort.pipe(new ReadlineParser({ delimiter: '\n' }));
 
   parser.on('data', (line) => {
@@ -572,17 +574,17 @@ function openSerialPort() {
   serialPort.on('error', (err) => {
     console.error('Serial port error:', err.message);
     if (err.message.includes('File not found')) {
-      console.log('COM5 not available yet...');
+      console.log(`${serialPortPath} not available yet...`);
       serialPort = null;
     }
   });
 
   serialPort.on('open', () => {
-    console.log('Serial port opened');
+    console.log('Serial port opened:', serialPortPath);
   });
 
   serialPort.on('close', () => {
-    console.log('Serial port closed');
+    console.log('Serial port closed:', serialPortPath);
     serialPort = null;
   });
 }
@@ -626,5 +628,4 @@ app.post('/update-wifi', (req, res) => {
 server.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
-
 
