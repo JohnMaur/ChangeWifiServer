@@ -1,128 +1,103 @@
-
-const axios = require('axios');
-const bonjour = require('bonjour')();
+const { SerialPort } = require('serialport');
+const { ReadlineParser } = require('@serialport/parser-readline');
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 
 const app = express();
+const port = process.env.PORT || 3535;
+
 app.use(bodyParser.json());
 app.use(cors({
   origin: "*",
 }));
 
-let esp8266Ip = null;
-let discoveryInterval = null;
-let connectionCheckInterval = null;
-let statusMessage = "Starting ESP8266 discovery...";
+let serialPort; // Define serialPort as a global variable
+let arduinoMessages = []; // Array to store Arduino messages
 
-// Update status message at various points in your code
-const discoverESP8266 = () => {
-  console.log("Starting ESP8266 discovery...");
-  statusMessage = "Starting ESP8266 discovery...";
-  
-  bonjour.find({ type: 'http' }, service => {
-    console.log("Found service:", service);
-    if (service.name === 'MACTsDevice') {
-      esp8266Ip = service.referer.address;
-      console.log(`Discovered ESP8266 at IP address: ${esp8266Ip}`);
-      statusMessage = `Discovered ESP8266 at IP address: ${esp8266Ip}`;
-
-      if (discoveryInterval) {
-        clearInterval(discoveryInterval);
-        discoveryInterval = null;
-        console.log("ESP8266 discovered, stopping further discovery attempts.");
-
-        // Start checking the connection status
-        startConnectionCheck();
-      }
-    } else {
-      console.log(`Found service: ${service.name}, but not the expected MACTsDevice`);
-    }
-  }).on('error', err => {
-    console.error("Bonjour error:", err);
-    statusMessage = "Bonjour error: " + err.message;
+function initializeSerialPort() {
+  serialPort = new SerialPort({
+    path: 'COM5', // Replace with the appropriate COM port
+    baudRate: 9600
   });
-};
 
-const startDiscovery = () => {
-  // Call the discovery function initially and set an interval for continuous discovery
-  discoverESP8266();
-  discoveryInterval = setInterval(discoverESP8266, 30000); // Retry discovery every 30 seconds
-};
+  const parser = serialPort.pipe(new ReadlineParser({ delimiter: '\n' }));
 
-const checkConnection = () => {
-  if (!esp8266Ip) return;
+  parser.on('data', (line) => {
+    console.log(`Received from Arduino: ${line}`);
+    arduinoMessages.push(line); // Store message in array
+  });
 
-  axios.get(`http://${esp8266Ip}/`)
-    .then(response => {
-      console.log("Connection check successful");
-      statusMessage = "Connection check successful";
-    })
-    .catch(error => {
-      console.error("Connection check failed, restarting discovery...");
-      statusMessage = "Connection check failed, restarting discovery...";
-      esp8266Ip = null;
-      startDiscovery();
-    });
-};
+  serialPort.on('error', (err) => {
+    console.error('Serial port error:', err.message);
+    if (err.message.includes('File not found')) {
+      console.log('COM5 not available yet...');
+      serialPort = null; // Reset serialPort variable
+    }
+  });
 
-// Add a new endpoint to get the current status
-app.get('/status', (req, res) => {
-  res.json({ status: statusMessage });
-});
+  serialPort.on('open', () => {
+    console.log('Serial port opened');
+    // Optionally, you can send an initialization command once port is opened
+    // Example: serialPort.write('INIT\n');
+  });
 
-const startConnectionCheck = () => {
-  if (connectionCheckInterval) {
-    clearInterval(connectionCheckInterval);
-  }
-  connectionCheckInterval = setInterval(checkConnection, 30000); // Check connection every 30 seconds
-};
+  serialPort.on('close', () => {
+    console.log('Serial port closed');
+    serialPort = null; // Reset serialPort variable
+  });
+}
 
-// Start the initial discovery process
-startDiscovery();
+function checkAndInitializeSerialPort() {
+  SerialPort.list().then((ports) => {
+    const com5Exists = ports.some(port => port.path === 'COM5');
+    if (com5Exists && !serialPort) {
+      console.log('COM5 found, initializing serial port...');
+      initializeSerialPort();
+    } else if (!com5Exists && serialPort) {
+      console.log('COM5 disconnected, closing serial port...');
+      serialPort.close();
+    }
+  }).catch((err) => {
+    console.error('Error listing serial ports:', err.message);
+  });
+}
 
-// Endpoint to get the discovered ESP8266 IP
-app.get('/esp8266-ip', (req, res) => {
-  if (!esp8266Ip) {
-    return res.status(500).send('ESP8266 not discovered yet');
-  }
-  res.json({ ip: esp8266Ip });
-});
+// Initialize serial port check on application startup
+checkAndInitializeSerialPort();
 
-// Test endpoint to check connection to ESP8266
-app.get('/test-connection', (req, res) => {
-  if (!esp8266Ip) {
-    return res.status(500).send('ESP8266 IP not set');
-  }
+// Check for COM5 availability every 10 seconds (adjust interval as needed)
+setInterval(checkAndInitializeSerialPort, 10000);
 
-  axios.get(`http://${esp8266Ip}/`)
-    .then(response => {
-      res.send(`Connection successful: ${response.data}`);
-    })
-    .catch(error => {
-      res.status(500).send(`Connection failed: ${error.message}`);
-    });
-});
-
-// Endpoint to update Wi-Fi settings on ESP8266
+// Endpoint to update WiFi configuration
 app.post('/update-wifi', (req, res) => {
-  const { ssid, password } = req.body;
-
-  if (!esp8266Ip) {
-    return res.status(500).send('ESP8266 not discovered yet');
+  if (!serialPort) {
+    return res.status(500).send('Serial port not available');
   }
 
-  axios.post(`http://${esp8266Ip}/update-wifi`, { ssid, password })
-    .then(response => {
-      res.send('Wi-Fi settings updated successfully');
-    })
-    .catch(error => {
-      res.status(500).send('Failed to update Wi-Fi settings');
-    });
+  const { ssid, password } = req.body;
+  const wifiConfig = JSON.stringify({ ssid, password });
+
+  serialPort.write(`${wifiConfig}\n`, (err) => {
+    if (err) {
+      console.error('Error writing to serial port:', err.message);
+      return res.status(500).send('Error updating WiFi');
+    }
+    console.log('Message sent to Arduino:', wifiConfig);
+    res.send('WiFi settings updated successfully');
+  });
 });
 
-const port = 3434;
+// Endpoint to check serial port availability
+app.get('/check-serial-port', (req, res) => {
+  res.json({ available: !!serialPort }); // Return true if serialPort is defined, false otherwise
+});
+
+// Endpoint to retrieve Arduino messages
+app.get('/arduino-messages', (req, res) => {
+  res.json({ messages: arduinoMessages }); // Return array of Arduino messages
+});
+
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`Server running on http://localhost:${port}`);
 });
